@@ -3,8 +3,9 @@
 Raspberry Pi 4B / 5 の GPIO を **Unity 6.3 LTS 製の Linux ゲーム**から使うためのライブラリ。
 Pi 上で動く常駐デーモン（`unitygpiod`）と、Unity 用の純 C# パッケージ（UPM）の 2 つで構成する。
 
-> **状態: 設計段階（2026-09-26 に要件定義）。コードはまだ無い。**
-> 実装は次のセッション以降で行う。
+> **状態: v1 実装済み（2026-10-04）・実機未検証。**
+> デーモンの純ロジック自己テストと、Unity 6000.3 での模擬モードの EditMode テストは通っている。
+> Pi 4B / Pi 5 での結合試験（[docs/requirements.md §7](docs/requirements.md#7-実装時に実機で確かめること)）はこれから。
 
 > **License**: [MIT](LICENSE)
 > © ラジアン（柏木主税） / RadianN_kswg
@@ -38,17 +39,62 @@ v2 以降の予定は [docs/requirements.md](docs/requirements.md#6-ロードマ
 - [docs/architecture.md](docs/architecture.md) — 構成、ライセンス境界、他の OS への導入方法、ピン配置
 - [docs/protocol.md](docs/protocol.md) — デーモンと SDK の間の通信プロトコル（v1 草案）
 
-## リポジトリ構成（予定）
+## リポジトリ構成
 
 ```
-LICENSE              MIT
-docs/                設計ドキュメント
-daemon/              unitygpiod（Python 3）・systemd ユニット・設定例・install.sh・unitygpio-config
-unity/               Unity パッケージ（UPM）。Runtime/ と Editor/
+LICENSE                      MIT
+docs/                        設計ドキュメント
+daemon/unitygpiod.py         デーモン本体（Python 3 + python3-libgpiod v2。PWM は sysfs、I2C は ioctl）
+daemon/unitygpiod.service    systemd ユニット（専用ユーザー unitygpio、gpio/i2c グループ）
+daemon/unitygpio.conf        設定例（/etc/unitygpio.conf）
+daemon/unitygpio-config      I2C / PWM を config.txt で有効化する CLI
+daemon/install.sh            導入スクリプト（pi-gen の on_chroot では --no-start）
+daemon/test_unitygpiod.py    自己テスト（実機不要）
+unity/                       UPM パッケージ net.numbertales-radiann.unitygpio
+unity/Runtime/               Gpio.cs（入口・接続・メインスレッド配送）, Handles.cs, Transport.cs, UnityGpioSettings.cs（Editor 専用設定）
+unity/Tests/Editor/          模擬モードの EditMode テスト
 ```
 
-Unity への導入（実装後）: Package Manager の「Add package from git URL」に
+### Pi 側の導入
+
+```sh
+git clone https://github.com/radiann-kswg/RasPiLib_UnityGpio.git
+sudo RasPiLib_UnityGpio/daemon/install.sh
+sudo unitygpio-config pwm on     # 必要なら。i2c も同様。反映は再起動
+```
+
+予約ピンは `/etc/unitygpio.conf` の `reserved`。手で叩くなら
+`echo '{"id":1,"op":"hello","proto":1}' | socat - UNIX-CONNECT:/run/unitygpio/unitygpio.sock`。
+
+### Unity 側の導入
+
+Package Manager の「Add package from git URL」に
 `https://github.com/radiann-kswg/RasPiLib_UnityGpio.git?path=unity` を指定する。
+
+```csharp
+using RasPiLib.UnityGpio;
+
+var button = Gpio.OpenInput(17, Bias.PullUp, Edge.Both, debounceMs: 10);
+button.Changed += v => Debug.Log($"button {v}");       // メインスレッド (Update の前)
+var lamp = Gpio.OpenOutput(27);
+lamp.Value = true;                                       // 送るだけ
+var servo = new Servo(Gpio.OpenPwm(12, 50f)) { Angle = 90f };
+var rgb = Gpio.OpenRgbLed(13, 22, 23);  rgb.Color = Color.cyan;
+byte[] id = await Gpio.OpenI2c(1, 0x76).WriteReadAsync(new byte[] { 0xD0 }, 1);
+```
+
+- デーモンが無い環境でも例外は出ない（`Gpio.IsAvailable` が false、操作は無視＋警告ログ）。
+- Editor では **Project Settings > RasPiLib UnityGpio** で模擬モード / 遠隔モードを選ぶ。
+  模擬モードの入力は `Gpio.Mock.SetInput(pin, value)`、I2C は `Gpio.Mock.I2cHandler` で差し込む。
+- Linux プレイヤーは `/run/unitygpio/unitygpio.sock` に接続する。環境変数 `UNITYGPIO_SOCKET` /
+  `UNITYGPIO_TCP=127.0.0.1:8787` で切り替えられる（box64 上で Unix ソケットが使えない場合の逃げ道）。
+
+### 検証
+
+```sh
+python3 daemon/test_unitygpiod.py                  # デーモンの純ロジック
+unity test <テスト用プロジェクト> --mode EditMode   # manifest.json の testables にパッケージを入れておく
+```
 
 ## 商標
 

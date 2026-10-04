@@ -1,0 +1,11 @@
+{
+  "name": "net.numbertales-radiann.unitygpio",
+  "displayName": "RasPiLib UnityGpio",
+  "version": "0.1.0",
+  "unity": "6000.3",
+  "description": "Raspberry Pi 4B / 5 の GPIO・ハードウェア PWM・I2C を Unity の Linux ゲームから使う純 C# SDK。Pi 上の unitygpiod デーモンと通信する。",
+  "license": "MIT",
+  "author": { "name": "RadianN_kswg", "url": "https://github.com/radiann-kswg" },
+  "keywords": ["raspberry-pi", "gpio", "pwm", "i2c"],
+  "documentationUrl": "https://github.com/radiann-kswg/RasPiLib_UnityGpio"
+}

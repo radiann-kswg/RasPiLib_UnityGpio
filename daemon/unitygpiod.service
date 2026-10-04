@@ -1,0 +1,20 @@
+[Unit]
+Description=unitygpiod - GPIO/PWM/I2C daemon for Unity games (RasPiLib_UnityGpio)
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/unitygpio/unitygpiod.py -c /etc/unitygpio.conf
+User=unitygpio
+SupplementaryGroups=gpio i2c
+RuntimeDirectory=unitygpio
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

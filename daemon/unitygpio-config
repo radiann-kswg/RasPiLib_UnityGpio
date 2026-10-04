@@ -1,0 +1,32 @@
+#!/bin/sh
+# unitygpio-config — I2C / PWM を有効化・無効化する（config.txt を書き換え、再起動で反映）
+# 使い方: sudo unitygpio-config i2c on|off | pwm on|off | status
+set -eu
+CFG="${UNITYGPIO_CONFIG_TXT:-/boot/firmware/config.txt}"
+[ -f "$CFG" ] || CFG=/boot/config.txt
+I2C_LINE='dtparam=i2c_arm=on'
+PWM_LINE='dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4'
+TAG='# unitygpio'
+
+usage() { echo "usage: $0 {i2c|pwm} {on|off} | status" >&2; exit 2; }
+
+has() { grep -qxF "$1 $TAG" "$CFG" || grep -qxF "$1" "$CFG"; }
+add() { has "$1" || printf '%s %s\n' "$1" "$TAG" >> "$CFG"; }
+remove() { sed -i "\|^$1\( $TAG\)\?\$|d" "$CFG"; }
+
+case "${1:-}" in
+  status)
+    has "$I2C_LINE" && echo "i2c: on" || echo "i2c: off"
+    has "$PWM_LINE" && echo "pwm: on" || echo "pwm: off"
+    echo "runtime: i2c-1 $( [ -e /dev/i2c-1 ] && echo yes || echo no ), pwmchip $(ls -d /sys/class/pwm/pwmchip* 2>/dev/null | tr '\n' ' ')"
+    exit 0 ;;
+  i2c) LINE="$I2C_LINE" ;;
+  pwm) LINE="$PWM_LINE" ;;
+  *) usage ;;
+esac
+case "${2:-}" in
+  on) add "$LINE" ;;
+  off) remove "$LINE" ;;
+  *) usage ;;
+esac
+echo "$1 $2 を $CFG に書いた。反映には再起動が必要: sudo reboot"

@@ -31,7 +31,7 @@
 | `unitygpio-config` | I2C・PWM を有効/無効にする CLI。`config.txt` を書き換え、再起動を促す | `daemon/` |
 | `install.sh` | 任意の Raspberry Pi OS へ上記を導入する。pi-gen の chroot 内からも使える | `daemon/` |
 | Unity SDK | 公開 API、接続管理（Unix ソケット / TCP / 模擬）、メインスレッドへのイベント配送 | `unity/Runtime/` |
-| Editor 拡張 | 遠隔モードの接続先・トークンの設定、模擬モードのピン表示 | `unity/Editor/` |
+| Editor 設定 | 遠隔モードの接続先・トークン、模擬/遠隔の切替（Project Settings > RasPiLib UnityGpio。`#if UNITY_EDITOR` で Runtime に同居） | `unity/Runtime/UnityGpioSettings.cs` |
 
 デーモンを Python にするのは、依存が `python3-libgpiod` だけで済み（PWM は sysfs、I2C は標準ライブラリの `fcntl.ioctl`）、
 Pi 上ですぐ直せるから（仮。応答が目標に届かなければ C へ置き換える。プロトコルは変えない）。
@@ -93,9 +93,9 @@ pi-gen で焼き込む場合は、独自ステージの `on_chroot` 内で `inst
   HAT や 2x20 のブレークアウト用パーツで引き出す（D14）。
 - GPIO は 3.3V。5V の信号を直接入れないこと。
 
-## 7. SDK の API（草案）
+## 7. SDK の API（v1 実装）
 
-実装時に名前は変わりうる。形（同期・非同期の別、event の配送先）は D13 で確定。
+実装の正本は `unity/Runtime/`。形（同期・非同期の別、event の配送先）は D13 のとおり。
 
 ```csharp
 using RasPiLib.UnityGpio;
@@ -104,22 +104,27 @@ if (!Gpio.IsAvailable) { /* 拡張パーツ無しで遊べるようにする */ 
 
 var button = Gpio.OpenInput(17, Bias.PullUp, Edge.Both, debounceMs: 10);
 bool pressed = !button.Value;                  // 保持している最新値を即時に返す
-button.Changed += v => Debug.Log($"button {v}"); // メインスレッドで発火
+button.Changed += v => Debug.Log($"button {v}"); // メインスレッド (PlayerLoop の Update 先頭) で発火
 
 var lamp = Gpio.OpenOutput(27, initialValue: false);
 lamp.Value = true;                              // 送るだけ（ブロックしない）
 
-var servo = new Servo(Gpio.OpenPwm(12, frequencyHz: 50), minPulseUs: 500, maxPulseUs: 2500);
+var pwm = Gpio.OpenPwm(12, frequencyHz: 50);    // FrequencyHz / Duty(0〜1) / Enabled / SetPulseWidthUs
+var servo = new Servo(pwm, minPulseUs: 500, maxPulseUs: 2500, maxAngle: 180);
 servo.Angle = 90f;
 
 var rgb = Gpio.OpenRgbLed(r: 13, g: 22, b: 23, activeLow: false); // R だけ明るさ可変
 rgb.Color = new Color(0.3f, 1f, 0f);
 
 var sensor = Gpio.OpenI2c(bus: 1, address: 0x76);
-byte[] id = await sensor.WriteReadAsync(new byte[] { 0xD0 }, readLength: 1); // Awaitable<byte[]>
+byte[] id = await sensor.WriteReadAsync(new byte[] { 0xD0 }, readLength: 1); // Awaitable<byte[]>。失敗は IOException
 ```
 
-各ハンドルは `IDisposable`。`Dispose` でデーモン側の確保も解放する。
+- 各ハンドルは `IDisposable`。`Dispose` でデーモン側の確保も解放する（出力は先に Low へ）。
+- デーモンが無い・確保に失敗したハンドルは `Dead` が true になり、以後の操作は無視される。
+- 確保の失敗と送るだけの操作の失敗は `Debug.LogError` と `Gpio.Error(code, pin, message)`、切断は `Gpio.Disconnected`。
+- `Gpio.Board` / `Gpio.PwmPins` / `Gpio.I2cBuses` / `Gpio.ReservedPins` で `hello` の内容が読める。
+- 接続は最初の `Gpio.*` 呼び出しで張り、`Application.quitting` で閉じる（閉じるとデーモンが後始末する）。
 
 ## 8. パッケージ情報（仮）
 
@@ -130,3 +135,5 @@ byte[] id = await sensor.WriteReadAsync(new byte[] { 0xD0 }, readLength: 1); // 
 | 最低 Unity | 6000.3 |
 | デーモンのソケット | `/run/unitygpio/unitygpio.sock`（モード 0660、グループ `gpio`） |
 | 遠隔モードの TCP ポート | `8787`（既定で無効） |
+| デーモンの実行ユーザー | `unitygpio`（システムユーザー、補助グループ gpio / i2c。install.sh が作る） |
+| pwmchip の検出 | sysfs の実パスに `fe20c000.pwm`（Pi 4B）/ `1f00098000.pwm`（Pi 5）を含むもの。`/etc/unitygpio.conf` の `pwmchip` で上書き可 |
